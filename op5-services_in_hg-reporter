@@ -1,0 +1,94 @@
+#!/usr/bin/python3
+
+
+import csv
+import http.client
+import json
+from urllib.parse import urlencode, quote_plus
+from getpass import getpass
+import base64
+import ssl
+import argparse
+import os
+
+# Create the command line argument parser
+parser = argparse.ArgumentParser(description="OP5 API Query to CSV")
+
+# Add the groups for the required and optional command line arguments. Also hide the default grouping
+parser._action_groups.pop()
+required = parser.add_argument_group('Required Arguments')
+optional = parser.add_argument_group('Modifier Arguments')
+
+# Add the command line arguments that are required.
+required.add_argument("-u", "--username", help="OP5 API username", type=str, required=True)
+#required.add_argument("-f", "--file", help="CSV file to create. Relative path is supported. If the file exists, it will be appended.", type=str, required=True)
+
+# Add the command line arguments that are optional.
+optional.add_argument("-s", "--server", help="OP5 Server DNS Name or IP. Defaults to localhost", default="localhost", type=str)
+optional.add_argument("-i", "--insecure", help="Allow invalid and self signed SSL Certificates. This argument has no options", action='store_true')
+
+# Parse the arguments into variables.
+args = parser.parse_args()
+
+# Determine if we are going to connect accepting any SSL certificate or require validation.
+if args.insecure:
+    conn = http.client.HTTPSConnection(
+        args.server,
+        context=ssl._create_unverified_context()
+    )
+else:
+    conn = http.client.HTTPSConnection(
+        args.server
+    )
+
+
+## Get json of hostgroups where num_hosts > 0
+# Add the required fields to be parsed into the URL for the GET request.
+to_encode = {
+    'format': 'json',
+    'query': '[hostgroups] num_services > 0',
+    'columns':'name'
+}
+
+
+
+# Get the password input from user
+apipw=getpass("OP5 API Password:")
+
+# Create the headers to allow authentication and return encoding.
+headers = {
+    'accept': "application/json",
+    'Authorization': 'Basic {auth_string}'.format(auth_string=base64.b64encode(str.encode('{username}:{password}'.format(username=args.username, password=apipw))).decode('utf=8'))
+}
+
+# perform the GET request for the results.
+conn.request("GET", "/api/filter/query?{query}".format(query=urlencode(to_encode, quote_via=quote_plus)), None, headers)
+
+# Process the response of the GET request.
+res = conn.getresponse()
+
+if res.status >= 400:
+    print('Server returned status code {status} - {reason}'.format(status=res.status, reason=res.reason))
+    exit(1)
+
+# Create JSON from the results.
+hg_json_results = json.loads(res.read())
+
+for hg in range(len(hg_json_results)):
+    print(hg_json_results[hg]['name'])
+    # perform the GET request for the results.
+
+    conn.request("GET", "/api/config/hostgroup/{hgname}".format(hgname=quote_plus(hg_json_results[hg]['name'])), None, headers)
+
+    # Process the response of the GET request.
+    res2 = conn.getresponse()
+
+    if res2.status >= 400:
+        print('Server returned status code {status} - {reason}'.format(status=res2.status, reason=res2.reason))
+        exit(1)
+
+    hgcfg_json = json.loads(res2.read())
+    if 'services' in hgcfg_json.keys() :
+        for svc in range(len(hgcfg_json['services'])):
+            print("  "+hgcfg_json['services'][svc]['service_description'])
+
